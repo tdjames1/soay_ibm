@@ -4,7 +4,7 @@
 
 library(arm) ## invlogit
 
-initState <- function (m.par, init.pop.size = 500) {
+initState <- function (m.par, init.pop.size = 500, maxA = 15) {
     ## Initialise individual state array for the population.
 
     ## Args:
@@ -23,16 +23,15 @@ initState <- function (m.par, init.pop.size = 500) {
 
     sets <- list(S=Sset, A=Aset, G=Gset)
 
-    ## Initialise state array
-    z <- array(dim=sapply(sets,length), dimnames=sets)
+    ## Initialise state array (uses util function from IPM code)
+    z <- mk.flist(list(S=Sset, A=Aset, G=Gset))
 
-    ## build list object
-    ##nt <- mk.flist(list(S=Sset, A=Aset, G=Gset))
+    ## Following strategy in supplementary material to Rees et
+    ## al. 2014, which is to get a random selection of new recruits
+    ## from normal distribution based on mean parent size:
 
-    ## YAH strategy in JANE paper is to get random selection from
-    ## normal distribution assuming all new recruits (using mean
-    ## parent size):
-    ## z <- rnorm(init.pop.size, mean = m.par["rcsz.int"] +  m.par["rcsz.z"] * 3.2, sd = m.par["rcsz.sd"])
+    ## z <- rnorm(init.pop.size, mean = m.par["rcsz.int"]
+    ##            + m.par["rcsz.z"] * 3.2, sd = m.par["rcsz.sd"])
 
     ## Offspring size model developed for the Soay coat colour IPM
     ## takes into account sex, twin status, maternal age, population
@@ -43,10 +42,15 @@ initState <- function (m.par, init.pop.size = 500) {
     ## mu = mPar["sz.off.(Intercept)"]+mPar["sz.off.capWgtMum"]*x+
     ## mPar["sz.off.ageMum"]*A+mPar["sz.off.sexM"]+mPar["sz.off.isTwnMat"]
 
-    ## Assume equal numbers of offspring of each sex and genotype
+    ## FIXME Need mean values mean.sz.F, mean.age.F for the following,
+    ## these values are made up.
+    mean.sz.F <- 3.2
+    mean.age.F <- 5
+
+    ## Assume equal numbers of offspring of each sex and genotype.
     n <- init.pop.size/6
 
-    ## Get proportion of twins
+    ## Get proportion of twins in the new population based on twinning rate
     p.twin <- invlogit(m.par["t.a1.F.(Intercept)"] + m.par["t.a1.F.capWgt"]*mean.sz.F
                        + m.par["t.a1.F.poly(ageY, 2, raw = TRUE)1"]*mean.age.F
                        + m.par["t.a1.F.poly(ageY, 2, raw = TRUE)2"]*mean.age.F^2)
@@ -57,14 +61,15 @@ initState <- function (m.par, init.pop.size = 500) {
             mu <- m.par["sz.off.(Intercept)"] +
                 m.par["sz.off.capWgtMum"]*mean.sz.F +
                     m.par["sz.off.ageMum"]*mean.age.F +
-                        m.par["sz.off.sexM"]*all.equal(S,"M")
+                        m.par["sz.off.sexM"]*as.numeric(S=="M")
 
-            z[[S, 0, G]] <- c(rnorm(n*prop.twin
-                                    , mean = mu + m.par["sz.off.isTwnMat"]
-                                    , sd = m.par["sz.off.sigma"]),
-                              rnorm(n*(1-prop.twin)
-                                    , mean = mu
-                                    , sd = m.par["sz.off.sigma"]))
+            z[[S, "0", G]] <- c(rnorm(n*prop.twin
+                                      , mean = mu + m.par["sz.off.isTwnMat"]
+                                      , sd = m.par["sz.off.sigma"]),
+                                rnorm(n*(1-prop.twin)
+                                      , mean = mu
+                                      , sd = m.par["sz.off.sigma"]))
+
         }
     }
     return(z)
