@@ -4,6 +4,10 @@
 
 library(arm) ## invlogit
 
+sdNt <- 127.1302
+midNt <- 431.7917
+scaleN <- function(N) return((N-midNt)/sdNt)
+
 initState <- function (m.par, init.pop.size = 500, maxA = 15) {
     ## Initialise individual state array for the population.
 
@@ -75,18 +79,175 @@ initState <- function (m.par, init.pop.size = 500, maxA = 15) {
     return(z)
 }
 
-doIBM <- function (model.params, init.pop.size = 500, sim.length = 200) {
+doSim <- function (model.params, init.pop.size = 500, sim.length = 200, maxA = 15) {
 
     ## check passed in params
     ## - model params: should contain all expected parameters
     ## - initial population size
     ## - simulation length
+    ## - misc params such as maxA etc
+
+    ## this could be generalised to require that client passes in the
+    ## functions required to set up the state array for the system and
+    ## to iterate the array between time steps.
 
     ## Get initial population state
     z <- initState (model.params, init.pop.size)
 
-    for (i in seq_len(sim.length)) {
-        doIBMStep(z)
+    ## Population structure - age, sex, genotype
+    Aset <- as.character(seq.int(0, maxA))
+    Gset <- c("GG","GT","TT")
+    Sset <- c("F","M")
+
+    numAset <- seq.int(0, maxA)
+    names(numAset) <- Aset
+    numGset <- seq.int(-1,1)
+    names(numGset) <- Gset
+
+    ## Check the dimensions of model.params to determine whether
+    ## to run simulation as average or variable environment.
+    if (!is.null(dim(model.params))) {
+        ## TODO Draw environment params from the set available
     }
 
+    ## Either way, use obsY=0 for all steps?
+    for (i in seq_len(sim.length)) {
+
+        ## What is the current population density?
+        Nt <- scaleN(length(unlist(z)))
+
+        ## Calculate male mating probabilities
+        ## n.mrepro gives mean num offspring for each individual
+        ## rpois gets random pick from Poisson distribution with given mean
+        num.off <- mk.flist(list(G=Gset))
+        for (G in Gset) {
+            num.off[[G]] <- 0
+            numG <- switch(G, GG=-1, GT=0, TT=+1)
+            for (A in Aset) {
+                z.sub <- z[["M", A, G]]
+                if (!is.null(z.sub)) {
+                    numA <- numAset[A]
+                    lambda <- n.mrepro(z.sub, numG, numA, Nt, model.params)
+                    num.off[[G]] <- sum(sapply(lambda, function(x) rpois(1,x))) + num.off[[G]]
+                }
+            }
+        }
+        ## obtain mating probs
+        nTot <- sum(unlist(num.off))
+        pGm <- sapply(num.off, function(x) x/nTot)
+
+        ## Apply life history events
+        z1 <- mk.flist(list(S=Sset, A=Aset, G=Gset))
+        for (G in Gset) {
+            numG <- switch(G, GG=-1, GT=0, TT=+1)
+            for (A in Aset) {
+                numA <- numAset[A]
+                for (S in Sset) {
+                    z.sub <- z[[S, A, G]]
+                    if (!is.null(z.sub)) {
+
+                        ## survival
+                        pS <- p.surv(z.sub, numG, S, numA, Nt, model.params)
+                        surv <- rbinom(n=length(z.sub), prob=pS, size=1)
+                        z.sub <- z.sub[which(surv == 1)]
+
+                        ## growth
+                        z1[[S, as.character(numA+1), G]] <- r.grow(z.sub, numG, S, numA, Nt, model.params)
+
+                        ## reproduction
+                        if (S == "F") {
+                            pB <- p.repr(z.sub, numG, numA, Nt, model.params)
+                            repr <- rbinom(n=length(z.sub), prob=pB, size=1)
+                            z.repr <- z.sub[which(repr == 1)]
+
+                            ## Twin or not?
+                            pT <- p.twin(z.repr, numG, numA, Nt, model.params)
+                            twin <- rbinom(n=length(z.repr), prob=pT, size=1)
+
+                            n.off <- length(z.repr)+length(twin[twin==1])
+
+                            ## Offspring sex
+                            o.sex <- rbinom(n=n.off, prob=0.5, size=1)
+
+                            ## Offspring genotype
+                            ## pGm is paternity probability for male genotypes
+                            pOffgen <- p.offgenotype(Gset, G, pGm)
+                            ## Assign (numeric) genotypes to offspring
+                            o.gen <- rmultinom(n=n.off, size=1, prob=pOffgen)
+                            o.gen <- t(o.gen)%*%numGset
+
+                            ## Offspring survival YAH
+                            ## Need to do for each offspring sex (M/F) and twin (0/1) status
+                            ##p.offsurv(z.repr, A=numA, Nt=Nt, mPar=model.param, S.off=, T.off=)
+
+                            ## Recruit size
+
+                        }
+                    }
+                }
+            }
+        }
+        z <- z1
+    }
+    return (z)
+}
+
+
+## Adapted from IPM code
+r.grow.list <- mk.flist(list(S=c("F","M"), A=c(0,+1)))
+
+r.grow.list[["F","0"]] <- function(x, Nt, mPar) {
+    mu <- mPar["g.a0.F.(Intercept)"]+mPar["g.a0.F.capWgt"]*x+mPar["g.a0.F.Nt"]*Nt
+    sg <- mPar["g.a0.F.sigma"]
+    return(rnorm(length(x),mu,sg))
+}
+r.grow.list[["F","1"]] <- function(x, G, A, Nt, mPar) {
+    mu <- mPar["g.a1.F.(Intercept)"] +
+        mPar["g.a1.F.capWgt"]*x +
+            mPar["g.a1.F.poly(ageY, 2, raw = TRUE)1"]*A +
+                mPar["g.a1.F.Nt"]*Nt +
+                    mPar["g.a1.F.ageY:Nt"]*Nt*A +
+                        mPar["g.a1.F.poly(ageY, 2, raw = TRUE)2"]*A^2
+    sg <- mPar["g.a1.F.sigma"]
+    return(rnorm(length(x),mu,sg))
+}
+r.grow.list[["M","0"]] <- function(x, Nt, mPar) {
+    mu <- mPar["g.a0.M.(Intercept)"]+
+        mPar["g.a0.M.capWgt"]*x+
+            mPar["g.a0.M.Nt"]*Nt+
+                mPar["g.a0.M.obsY"]*mPar["obsY"]
+    sg <- mPar["g.a0.M.sigma"]
+    return(rnorm(length(x),mu,sg))
+}
+r.grow.list[["M","1"]] <- function(x, G, A, Nt, mPar) {
+    mu <- mPar["g.a1.M.(Intercept)"] +
+        mPar["g.a1.M.capWgt"]*x
+    sg <- mPar["g.a1.M.sigma"]
+    return(rnorm(length(x),mu,sg))
+}
+
+r.grow <- function(x, G, S, A, Nt, mPar)
+{
+    ## expect S and A to have length=1
+    if (length(S) != 1 | length(A) != 1)
+        stop("growth function not vectorised for S(ex) and (A)ge")
+    ## assign the required function
+    if       (S=="F") {
+        if        (A ==  0) {
+            f <- r.grow.list[["F", "0"]]
+        } else if (A >=  1) {
+            f <- r.grow.list[["F", "1"]]
+        } else stop("invalid (A)ge")
+    } else if (S=="M") {
+        if        (A ==  0) {
+            f <- r.grow.list[["M", "0"]]
+        } else if (A >=  1) {
+            f <- r.grow.list[["M", "1"]]
+        } else stop("invalid (A)ge")
+    } else stop("invalid (S)ex")
+    ## get the required arguments as a list of atomic 'names'
+    fargs <- names(formals(f))
+    fargs <- sapply(fargs, as.name)
+    ## call the function and return
+    return(do.call("f", fargs))
 }
