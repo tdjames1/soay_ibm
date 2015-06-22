@@ -138,6 +138,7 @@ doSim <- function (model.params, init.pop.size = 500, sim.length = 200, maxA = 1
 
         ## Apply life history events
         z1 <- mk.flist(list(S=Sset, A=Aset, G=Gset))
+        z1.rec <- mk.flist(list(S=Sset, G=Gset))
         for (G in Gset) {
             numG <- switch(G, GG=-1, GT=0, TT=+1)
             for (A in Aset) {
@@ -164,24 +165,53 @@ doSim <- function (model.params, init.pop.size = 500, sim.length = 200, maxA = 1
                             pT <- p.twin(z.repr, numG, numA, Nt, model.params)
                             twin <- rbinom(n=length(z.repr), prob=pT, size=1)
 
-                            n.off <- length(z.repr)+length(twin[twin==1])
+                            for (t.off in seq.int(0,1)) {
 
-                            ## Offspring sex
-                            o.sex <- rbinom(n=n.off, prob=0.5, size=1)
+                                z_ <- z.repr[which(twin == t.off)]
+                                n.off <- ifelse(t.off == 1, 2*length(z_), length(z_))
 
-                            ## Offspring genotype
-                            ## pGm is paternity probability for male genotypes
-                            pOffgen <- p.offgenotype(Gset, G, pGm)
-                            ## Assign (numeric) genotypes to offspring
-                            o.gen <- rmultinom(n=n.off, size=1, prob=pOffgen)
-                            o.gen <- t(o.gen)%*%numGset
+                                ## Offspring sex
+                                o.sex <- rbinom(n=n.off, prob=0.5, size=1)
+                                ## OR? rmultinom(n=length(z_), prob=c(0.5,0.5), size=1+t.off))
+                                o.sex <- paste(c("F","M")[match(o.sex, c(0,1))])
 
-                            ## Offspring survival YAH
-                            ## Need to do for each offspring sex (M/F) and twin (0/1) status
-                            ##p.offsurv(z.repr, A=numA, Nt=Nt, mPar=model.param, S.off=, T.off=)
+                                ## Offspring genotype
+                                ## pGm is paternity probability for male genotypes
+                                pOffgen <- p.offgenotype(Gset, G, pGm)
+                                ## Assign (numeric) genotypes to
+                                ## offspring; not taking account of
+                                ## paternity of twins for now. (Pemberton
+                                ## et al. 1999 recorded 26% of twins with
+                                ## known paternity having same sire.)
+                                o.gen <- rmultinom(n=n.off, prob=pOffgen, size=1)
+                                o.gen <- t(o.gen)%*%numGset
 
-                            ## Recruit size
+                                ## Offspring survival
+                                ## Need to do for each offspring sex (M/F) and twin (0/1) status
+                                for (s.off in Sset) {
+                                    ## Index into maternal set for this sex
+                                    ## This should sort out the parents appropriately for twin offspring
+                                    i.subset <- which(o.sex == s.off)
+                                    i.par <- ifelse(t.off == 1, ceiling(i.subset/2), i.subset)
+                                    pRec <- p.offsurv(z_[i.par], A=numA, Nt=Nt, mPar=model.params, S.off=s.off, T.off=t.off)
+                                    recr <- rep(NA, n.off)
+                                    recr[i.subset] <- rbinom(n=length(i.subset), prob=pRec, size=1)
 
+                                    ## Recruit size
+                                    if (sum(recr,na.rm=TRUE)>0) {
+                                        z1.rec <- rep(NA, n.off)
+                                        i.recr <- which(recr == 1)
+                                        i.par <- ifelse(t.off == 1, ceiling(i.recr/2), i.recr)
+                                        z1.rec[i.recr] <- r.offsize(z_[i.par], numG, numA, Nt, model.params, S.o=s.off, T.off=t.off)
+                                        ## Store result for each genotype from the survivors
+                                        for (numG.off in unique(o.gen[which(recr==1)])) {
+                                            G.off <- Gset[numG.off+2]
+                                            z1[[s.off, "0", G.off]] <- c(z1[[s.off, "0", G.off]],
+                                                                       z1.rec[which(recr == 1 & o.gen == numG.off)])
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -191,7 +221,6 @@ doSim <- function (model.params, init.pop.size = 500, sim.length = 200, maxA = 1
     }
     return (z)
 }
-
 
 ## Adapted from IPM code
 r.grow.list <- mk.flist(list(S=c("F","M"), A=c(0,+1)))
@@ -245,6 +274,74 @@ r.grow <- function(x, G, S, A, Nt, mPar)
             f <- r.grow.list[["M", "1"]]
         } else stop("invalid (A)ge")
     } else stop("invalid (S)ex")
+    ## get the required arguments as a list of atomic 'names'
+    fargs <- names(formals(f))
+    fargs <- sapply(fargs, as.name)
+    ## call the function and return
+    return(do.call("f", fargs))
+}
+
+## Adapted from IPM code
+r.offsize.list <- mk.flist(list(S.off=c("F","M"), T.off=c("0","1")))
+
+r.offsize.list[["F","0"]] <- function(x, A, Nt, mPar) {
+    mu <- mPar["sz.off.(Intercept)"]+mPar["sz.off.capWgtMum"]*x+
+          mPar["sz.off.ageMum"]*A+
+          mPar["sz.off.Ntm1"]*Nt+
+          mPar["sz.off.obsY"]*mPar["obsY"]+
+          mPar["sz.off.ageMum:obsY"]*A*mPar["obsY"]
+    sg <- mPar["sz.off.sigma"]
+    return(rnorm(length(x),mu,sg))
+}
+r.offsize.list[["M","0"]] <- function(x, A, Nt, mPar) {
+    mu <- mPar["sz.off.(Intercept)"]+mPar["sz.off.capWgtMum"]*x+
+          mPar["sz.off.ageMum"]*A+
+          mPar["sz.off.Ntm1"]*Nt+mPar["sz.off.sexM"]+
+          mPar["sz.off.obsY"]*mPar["obsY"]+
+          mPar["sz.off.ageMum:obsY"]*A*mPar["obsY"]
+    sg <- mPar["sz.off.sigma"]
+    return(rnorm(length(x),mu,sg))
+}
+r.offsize.list[["F","1"]] <- function(x, A, Nt, mPar) {
+    mu <- mPar["sz.off.(Intercept)"]+mPar["sz.off.capWgtMum"]*x+
+          mPar["sz.off.ageMum"]*A+
+          mPar["sz.off.Ntm1"]*Nt+mPar["sz.off.isTwnMat"]+
+          mPar["sz.off.obsY"]*mPar["obsY"]+
+          mPar["sz.off.ageMum:obsY"]*A*mPar["obsY"]
+    sg <- mPar["sz.off.sigma"]
+    return(rnorm(length(x),mu,sg))
+}
+r.offsize.list[["M","1"]] <- function(x, A, Nt, mPar) {
+    mu <- mPar["sz.off.(Intercept)"]+mPar["sz.off.capWgtMum"]*x+
+          mPar["sz.off.ageMum"]*A+
+          mPar["sz.off.Ntm1"]*Nt+mPar["sz.off.sexM"]+mPar["sz.off.isTwnMat"]+
+          mPar["sz.off.obsY"]*mPar["obsY"]+
+          mPar["sz.off.ageMum:obsY"]*A*mPar["obsY"]
+    sg <- mPar["sz.off.sigma"]
+    return(rnorm(length(x),mu,sg))
+}
+
+r.offsize <- function(x, G, A, Nt, mPar, S.off, T.off)
+{
+    ## expect S and A to have length=1
+    if (length(S.off) != 1 | length(T.off) != 1)
+        stop("offspring size function not vectorised for offspring S(ex), female (A)ge and (T)win status")
+    ## assign the required function
+    if (all(A >= 0)) {
+        if        (S.off == "F") {
+            if        (T.off == 0) {
+                f <- r.offsize.list[["F","0"]]
+            } else if (T.off == 1) {
+                f <- r.offsize.list[["F","1"]]
+            } else stop("invalid offspring (T)win status")
+        } else if (S.off == "M") {
+            if        (T.off == 0) {
+                f <- r.offsize.list[["M","0"]]
+            } else if (T.off == 1) {
+                f <- r.offsize.list[["M","1"]]
+            } else stop("invalid offspring (T)win status")
+        } else stop("invalid offspring (S)ex")
+    } else stop("invalid (A)ge")
     ## get the required arguments as a list of atomic 'names'
     fargs <- names(formals(f))
     fargs <- sapply(fargs, as.name)
