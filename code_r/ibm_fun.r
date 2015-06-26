@@ -92,14 +92,14 @@ doSim <- function (model.params, init.pop.size = 500, sim.length = 200, maxA = 1
     ## to iterate the array between time steps.
 
     ## Get initial population state
-    z <- initState (model.params, init.pop.size)
+    z <- initState (model.params, init.pop.size, maxA)
 
     ## Population structure - age, sex, genotype
-    Aset <- as.character(seq.int(0, maxA))
-    Gset <- c("GG","GT","TT")
-    Sset <- c("F","M")
+    Aset <- dimnames(z)$A
+    Gset <- dimnames(z)$G
+    Sset <- dimnames(z)$S
 
-    numAset <- seq.int(0, maxA)
+    numAset <- as.numeric(Aset)
     names(numAset) <- Aset
     numGset <- seq.int(-1,1)
     names(numGset) <- Gset
@@ -113,28 +113,13 @@ doSim <- function (model.params, init.pop.size = 500, sim.length = 200, maxA = 1
     ## Either way, use obsY=0 for all steps?
     for (i in seq_len(sim.length)) {
 
-        ## What is the current population density?
+        ## Get the current population density (standardized according
+        ## to the mean and standard deviation observed in the St Kilda
+        ## population)
         Nt <- scaleN(length(unlist(z)))
 
-        ## Calculate male mating probabilities
-        ## n.mrepro gives mean num offspring for each individual
-        ## rpois gets random pick from Poisson distribution with given mean
-        num.off <- mk.flist(list(G=Gset))
-        for (G in Gset) {
-            num.off[[G]] <- 0
-            numG <- switch(G, GG=-1, GT=0, TT=+1)
-            for (A in Aset) {
-                z.sub <- z[["M", A, G]]
-                if (!is.null(z.sub)) {
-                    numA <- numAset[A]
-                    lambda <- n.mrepro(z.sub, numG, numA, Nt, model.params)
-                    num.off[[G]] <- sum(sapply(lambda, function(x) rpois(1,x))) + num.off[[G]]
-                }
-            }
-        }
-        ## obtain mating probs
-        nTot <- sum(unlist(num.off))
-        pGm <- sapply(num.off, function(x) x/nTot)
+        ## Calculate male paternity probabilities for each genotype
+        pGm <- calcMalePaternity(z, Nt, model.params)
 
         ## Apply life history events
         z1 <- mk.flist(list(S=Sset, A=Aset, G=Gset))
@@ -145,15 +130,20 @@ doSim <- function (model.params, init.pop.size = 500, sim.length = 200, maxA = 1
                 numA <- numAset[A]
                 for (S in Sset) {
                     z.sub <- z[[S, A, G]]
-                    if (!is.null(z.sub)) {
+                    if (!is.null(z.sub) & length(z.sub) > 0) {
 
                         ## survival
                         pS <- p.surv(z.sub, numG, S, numA, Nt, model.params)
                         surv <- rbinom(n=length(z.sub), prob=pS, size=1)
                         z.sub <- z.sub[which(surv == 1)]
 
+                        if (length(z.sub) == 0) next
+
                         ## growth
-                        z1[[S, as.character(numA+1), G]] <- r.grow(z.sub, numG, S, numA, Nt, model.params)
+                        if (numA < maxA) {
+                            z1[[S, as.character(numA+1), G]] <- r.grow(z.sub, numG, S,
+                                                                       numA, Nt, model.params)
+                        }
 
                         ## reproduction
                         if (S == "F") {
@@ -193,7 +183,8 @@ doSim <- function (model.params, init.pop.size = 500, sim.length = 200, maxA = 1
                                     ## This should sort out the parents appropriately for twin offspring
                                     i.subset <- which(o.sex == s.off)
                                     i.par <- ifelse(t.off == 1, ceiling(i.subset/2), i.subset)
-                                    pRec <- p.offsurv(z_[i.par], A=numA, Nt=Nt, mPar=model.params, S.off=s.off, T.off=t.off)
+                                    pRec <- p.offsurv(z_[i.par], A=numA, Nt=Nt, mPar=model.params,
+                                                      S.off=s.off, T.off=t.off)
                                     recr <- rep(NA, n.off)
                                     recr[i.subset] <- rbinom(n=length(i.subset), prob=pRec, size=1)
 
@@ -202,12 +193,14 @@ doSim <- function (model.params, init.pop.size = 500, sim.length = 200, maxA = 1
                                         z1.rec <- rep(NA, n.off)
                                         i.recr <- which(recr == 1)
                                         i.par <- ifelse(t.off == 1, ceiling(i.recr/2), i.recr)
-                                        z1.rec[i.recr] <- r.offsize(z_[i.par], numG, numA, Nt, model.params, S.o=s.off, T.off=t.off)
+                                        z1.rec[i.recr] <- r.offsize(z_[i.par], numG, numA, Nt,
+                                                                    model.params, S.o=s.off, T.off=t.off)
                                         ## Store result for each genotype from the survivors
                                         for (numG.off in unique(o.gen[which(recr==1)])) {
                                             G.off <- Gset[numG.off+2]
                                             z1[[s.off, "0", G.off]] <- c(z1[[s.off, "0", G.off]],
-                                                                       z1.rec[which(recr == 1 & o.gen == numG.off)])
+                                                                         z1.rec[which(recr == 1 &
+                                                                                      o.gen == numG.off)])
                                         }
                                     }
                                 }
@@ -220,6 +213,39 @@ doSim <- function (model.params, init.pop.size = 500, sim.length = 200, maxA = 1
         z <- z1
     }
     return (z)
+}
+
+calcMalePaternity <- function(z, Nt, model.params) {
+    ## Calculate male paternity probabilities for each genotype.
+
+    ## Args:
+    ##   z: Population state vector
+    ##   Nt: Population density
+    ##   model.params: Vital rate model parameters
+
+    ## Returns:
+    ##   Vector indicating the probability of paternity for males of each genotype.
+    Gset <- dimnames(z)$G
+    Aset <- dimnames(z)$A
+    num.off <- mk.flist(list(G=Gset))
+    for (G in Gset) {
+        num.off[[G]] <- 0
+        numG <- switch(G, GG=-1, GT=0, TT=+1)
+        for (A in Aset) {
+            z.sub <- z[["M", A, G]]
+            if (!is.null(z.sub) & length(z.sub) > 0) {
+                numA <- as.numeric(A)
+                ## n.mrepro gives mean num offspring for each individual
+                lambda <- n.mrepro(z.sub, numG, numA, Nt, model.params)
+                ## rpois gets random pick from Poisson distribution with the given mean
+                num.off[[G]] <- sum(sapply(lambda, function(x) rpois(1,x))) + num.off[[G]]
+            }
+        }
+    }
+    ## obtain mating probs
+    nTot <- sum(unlist(num.off))
+    pGm <- sapply(num.off, function(x) x/nTot)
+    return(pGm)
 }
 
 ## Adapted from IPM code
