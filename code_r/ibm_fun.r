@@ -110,6 +110,10 @@ doSim <- function (model.params, init.pop.size = 500, sim.length = 200, maxA = 1
         ## TODO Draw environment params from the set available
     }
 
+    ## Storage for population size and mean body mass
+    num <- num.F <- num.M <- num.GG <- num.GT <- num.TT <-
+        zbar <- zbar.F <- zbar.M <- zbar.GG <- zbar.GT <- zbar.TT <- numeric(sim.length)
+
     ## Either way, use obsY=0 for all steps?
     for (i in seq_len(sim.length)) {
 
@@ -162,7 +166,6 @@ doSim <- function (model.params, init.pop.size = 500, sim.length = 200, maxA = 1
 
                                 ## Offspring sex
                                 o.sex <- rbinom(n=n.off, prob=0.5, size=1)
-                                ## OR? rmultinom(n=length(z_), prob=c(0.5,0.5), size=1+t.off))
                                 o.sex <- paste(c("F","M")[match(o.sex, c(0,1))])
 
                                 ## Offspring genotype
@@ -210,9 +213,24 @@ doSim <- function (model.params, init.pop.size = 500, sim.length = 200, maxA = 1
                 }
             }
         }
+        ## Store some population stats - number of individuals, mean body mass for different classes
+        num[i] <- length(unlist(z[   ,,    ]))
+        num.F[i] <- length(unlist(z["F",,    ]))
+        num.M[i] <- length(unlist(z["M",,    ]))
+        num.GG[i] <- length(unlist(z[   ,,"GG"]))
+        num.GT[i] <- length(unlist(z[   ,,"GT"]))
+        num.TT[i] <- length(unlist(z[   ,,"TT"]))
+        zbar[i] <- mean(unlist(z[   ,,    ]))
+        zbar.F[i] <-  mean(unlist(z["F",,    ]))
+        zbar.M[i] <-  mean(unlist(z["M",,    ]))
+        zbar.GG[i] <-  mean(unlist(z[   ,,"GG"]))
+        zbar.GT[i] <-  mean(unlist(z[   ,,"GT"]))
+        zbar.TT[i] <-  mean(unlist(z[   ,,"TT"]))
         z <- z1
     }
-    return (z)
+    return(list(z=z,
+                pop.size=list(T=num,F=num.F,M=num.M,GG=num.GG,GT=num.GT,TT=num.TT),
+                mean.z=list(T=zbar,F=zbar.F,M=zbar.M,GG=zbar.GG,GT=zbar.GT,TT=zbar.TT)))
 }
 
 calcMalePaternity <- function(z, Nt, model.params) {
