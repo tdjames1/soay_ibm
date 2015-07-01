@@ -86,8 +86,18 @@ doSim <- function (model.params, init.pop.size = 500, sim.length = 200, maxA = 1
     ## functions required to set up the state array for the system and
     ## to iterate the array between time steps.
 
+    ## Check the dimensions of model.params to determine whether
+    ## to run simulation as averaged or variable environment.
+    tEnv <- numeric(0)
+    mPar <- model.params
+    if (!is.null(dim(mPar))) {
+        ## Sample environment parameterss from the set available
+        tEnv <- sample(1:(dim(mPar)[2]), sim.length+1, replace=TRUE)
+        mPar <- model.params[,tEnv[1]]
+    }
+
     ## Get initial population state
-    z <- initState (model.params, init.pop.size, maxA)
+    z <- initState (mPar, init.pop.size, maxA)
 
     ## Population structure - age, sex, genotype
     Aset <- dimnames(z)$A
@@ -99,18 +109,15 @@ doSim <- function (model.params, init.pop.size = 500, sim.length = 200, maxA = 1
     numGset <- seq.int(-1,1)
     names(numGset) <- Gset
 
-    ## Check the dimensions of model.params to determine whether
-    ## to run simulation as average or variable environment.
-    if (!is.null(dim(model.params))) {
-        ## TODO Draw environment params from the set available
-    }
-
     ## Storage for population size and mean body mass
     num <- num.F <- num.M <- num.GG <- num.GT <- num.TT <-
         zbar <- zbar.F <- zbar.M <- zbar.GG <- zbar.GT <- zbar.TT <- numeric(sim.length)
 
-    ## Either way, use obsY=0 for all steps?
     for (i in seq_len(sim.length)) {
+        if(length(tEnv)>0) {
+            ## Select model parameters for this step
+            mPar <- model.params[,tEnv[i+1]]
+        }
 
         ## Get the current population density (standardized according
         ## to the mean and standard deviation observed in the St Kilda
@@ -118,7 +125,7 @@ doSim <- function (model.params, init.pop.size = 500, sim.length = 200, maxA = 1
         Nt <- scaleN(length(unlist(z)))
 
         ## Calculate male paternity probabilities for each genotype
-        pGm <- calcMalePaternity(z, Nt, model.params)
+        pGm <- calcMalePaternity(z, Nt, mPar)
 
         ## Apply life history events
         z1 <- mk.flist(list(S=Sset, A=Aset, G=Gset))
@@ -132,7 +139,7 @@ doSim <- function (model.params, init.pop.size = 500, sim.length = 200, maxA = 1
                     if (!is.null(z.sub) & length(z.sub) > 0) {
 
                         ## survival
-                        pS <- p.surv(z.sub, numG, S, numA, Nt, model.params)
+                        pS <- p.surv(z.sub, numG, S, numA, Nt, mPar)
                         surv <- rbinom(n=length(z.sub), prob=pS, size=1)
                         z.sub <- z.sub[which(surv == 1)]
 
@@ -141,17 +148,17 @@ doSim <- function (model.params, init.pop.size = 500, sim.length = 200, maxA = 1
                         ## growth
                         if (numA < maxA) {
                             z1[[S, as.character(numA+1), G]] <- r.grow(z.sub, numG, S,
-                                                                       numA, Nt, model.params)
+                                                                       numA, Nt, mPar)
                         }
 
                         ## reproduction
                         if (S == "F") {
-                            pB <- p.repr(z.sub, numG, numA, Nt, model.params)
+                            pB <- p.repr(z.sub, numG, numA, Nt, mPar)
                             repr <- rbinom(n=length(z.sub), prob=pB, size=1)
                             z.repr <- z.sub[which(repr == 1)]
 
                             ## Twin or not?
-                            pT <- p.twin(z.repr, numG, numA, Nt, model.params)
+                            pT <- p.twin(z.repr, numG, numA, Nt, mPar)
                             twin <- rbinom(n=length(z.repr), prob=pT, size=1)
 
                             for (t.off in seq.int(0,1)) {
@@ -181,7 +188,7 @@ doSim <- function (model.params, init.pop.size = 500, sim.length = 200, maxA = 1
                                     ## This should sort out the parents appropriately for twin offspring
                                     i.subset <- which(o.sex == s.off)
                                     i.par <- ifelse(t.off == 1, ceiling(i.subset/2), i.subset)
-                                    pRec <- p.offsurv(z_[i.par], A=numA, Nt=Nt, mPar=model.params,
+                                    pRec <- p.offsurv(z_[i.par], A=numA, Nt=Nt, mPar=mPar,
                                                       S.off=s.off, T.off=t.off)
                                     recr <- rep(NA, n.off)
                                     recr[i.subset] <- rbinom(n=length(i.subset), prob=pRec, size=1)
@@ -192,7 +199,7 @@ doSim <- function (model.params, init.pop.size = 500, sim.length = 200, maxA = 1
                                         i.recr <- which(recr == 1)
                                         i.par <- ifelse(t.off == 1, ceiling(i.recr/2), i.recr)
                                         z1.rec[i.recr] <- r.offsize(z_[i.par], numG, numA, Nt,
-                                                                    model.params, S.o=s.off, T.off=t.off)
+                                                                    mPar, S.o=s.off, T.off=t.off)
                                         ## Store result for each genotype from the survivors
                                         for (numG.off in unique(o.gen[which(recr==1)])) {
                                             G.off <- Gset[numG.off+2]
