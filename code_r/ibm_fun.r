@@ -4,9 +4,14 @@
 
 library(arm) ## invlogit
 
+## Population statistics from annual sheep data
 sdNt <- 127.1302
 midNt <- 431.7917
 scaleN <- function(N) return((N-midNt)/sdNt)
+
+## Mean age and capture weight of mothers of age 0 individuals
+mean.ageMum <- 4.06147
+mean.capWgtMum <- 3.082146
 
 initState <- function (m.par, init.pop.size = 500, maxA = 15) {
     ## Initialise individual state array for the population.
@@ -27,44 +32,34 @@ initState <- function (m.par, init.pop.size = 500, maxA = 15) {
 
     sets <- list(S=Sset, A=Aset, G=Gset)
 
-    ## Initialise state array (uses util function from IPM code)
+    ## Initialise state array
     z <- mk.flist(list(S=Sset, A=Aset, G=Gset))
 
     ## Following strategy in supplementary material to Rees et
     ## al. 2014, which is to get a random selection of new recruits
-    ## from normal distribution based on mean parent size:
+    ## from normal distribution based on mean parent size.  Offspring
+    ## size model developed for the Soay coat colour IPM takes into
+    ## account sex, twin status, maternal age, population density and
+    ## observation year.  With centred standardized density and year
+    ## this reduces to:
 
-    ## z <- rnorm(init.pop.size, mean = m.par["rcsz.int"]
-    ##            + m.par["rcsz.z"] * 3.2, sd = m.par["rcsz.sd"])
-
-    ## Offspring size model developed for the Soay coat colour IPM
-    ## takes into account sex, twin status, maternal age, population
-    ## density and observation year:
-    ## capWgt~1+sex+capWgtMum+isTwnMat+ageMum*obsY+Ntm1+(1|obsYf)
-
-    ## With centred standardized density and year this reduces to:
     ## mu = mPar["sz.off.(Intercept)"]+mPar["sz.off.capWgtMum"]*x+
     ## mPar["sz.off.ageMum"]*A+mPar["sz.off.sexM"]+mPar["sz.off.isTwnMat"]
-
-    ## FIXME Need mean values mean.sz.F, mean.age.F for the following,
-    ## these values are made up.
-    mean.sz.F <- 3.2
-    mean.age.F <- 5
 
     ## Assume equal numbers of offspring of each sex and genotype.
     n <- init.pop.size/6
 
     ## Get proportion of twins in the new population based on twinning rate
-    p.twin <- invlogit(m.par["t.a1.F.(Intercept)"] + m.par["t.a1.F.capWgt"]*mean.sz.F
-                       + m.par["t.a1.F.poly(ageY, 2, raw = TRUE)1"]*mean.age.F
-                       + m.par["t.a1.F.poly(ageY, 2, raw = TRUE)2"]*mean.age.F^2)
+    p.twin <- invlogit(m.par["t.a1.F.(Intercept)"] + m.par["t.a1.F.capWgt"]*mean.capWgtMum
+                       + m.par["t.a1.F.poly(ageY, 2, raw = TRUE)1"]*mean.ageMum
+                       + m.par["t.a1.F.poly(ageY, 2, raw = TRUE)2"]*mean.ageMum^2)
     prop.twin <- 2*p.twin/(1+p.twin)
 
     for (G in Gset) {
         for (S in Sset) {
             mu <- m.par["sz.off.(Intercept)"] +
-                m.par["sz.off.capWgtMum"]*mean.sz.F +
-                    m.par["sz.off.ageMum"]*mean.age.F +
+                m.par["sz.off.capWgtMum"]*mean.capWgtMum +
+                    m.par["sz.off.ageMum"]*mean.ageMum +
                         m.par["sz.off.sexM"]*as.numeric(S=="M")
 
             z[[S, "0", G]] <- c(rnorm(n*prop.twin
