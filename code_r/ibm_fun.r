@@ -91,7 +91,7 @@ doSim <- function (model.params, init.pop.size = 500, sim.length = 200, maxA = 1
     tEnv <- numeric(0)
     mPar <- model.params
     if (!is.null(dim(mPar))) {
-        ## Sample environment parameterss from the set available
+        ## Sample environment parameters from the set available
         tEnv <- sample(1:(dim(mPar)[2]), sim.length+1, replace=TRUE)
         mPar <- model.params[,tEnv[1]]
     }
@@ -109,9 +109,8 @@ doSim <- function (model.params, init.pop.size = 500, sim.length = 200, maxA = 1
     numGset <- seq.int(-1,1)
     names(numGset) <- Gset
 
-    ## Storage for population size and mean body mass
-    num <- num.F <- num.M <- num.GG <- num.GT <- num.TT <-
-        zbar <- zbar.F <- zbar.M <- zbar.GG <- zbar.GT <- zbar.TT <- numeric(sim.length)
+    ## Storage for simulated population at each timestep
+    zt <- list(sim.length)
 
     for (i in seq_len(sim.length)) {
         if(length(tEnv)>0) {
@@ -152,7 +151,7 @@ doSim <- function (model.params, init.pop.size = 500, sim.length = 200, maxA = 1
                         }
 
                         ## reproduction
-                        if (S == "F") {
+                        if (S == "F" && !is.na(pGm)) {
                             pB <- p.repr(z.sub, numG, numA, Nt, mPar)
                             repr <- rbinom(n=length(z.sub), prob=pB, size=1)
                             z.repr <- z.sub[which(repr == 1)]
@@ -215,28 +214,22 @@ doSim <- function (model.params, init.pop.size = 500, sim.length = 200, maxA = 1
                 }
             }
         }
-        ## Store some population stats - number of individuals, mean body mass for different classes
-        num[i] <- length(unlist(z[   ,,    ]))
-        num.F[i] <- length(unlist(z["F",,    ]))
-        num.M[i] <- length(unlist(z["M",,    ]))
-        num.GG[i] <- length(unlist(z[   ,,"GG"]))
-        num.GT[i] <- length(unlist(z[   ,,"GT"]))
-        num.TT[i] <- length(unlist(z[   ,,"TT"]))
-        zbar[i] <- mean(unlist(z[   ,,    ]))
-        zbar.F[i] <-  mean(unlist(z["F",,    ]))
-        zbar.M[i] <-  mean(unlist(z["M",,    ]))
-        zbar.GG[i] <-  mean(unlist(z[   ,,"GG"]))
-        zbar.GT[i] <-  mean(unlist(z[   ,,"GT"]))
-        zbar.TT[i] <-  mean(unlist(z[   ,,"TT"]))
+        ## Store population for this timestep
+        zt[[i]] <- z1
+        if(length(unlist(z1)) == 0) {
+            break
+        }
         z <- z1
     }
-    return(list(z=z,
-                pop.size=list(T=num,F=num.F,M=num.M,GG=num.GG,GT=num.GT,TT=num.TT),
-                mean.z=list(T=zbar,F=zbar.F,M=zbar.M,GG=zbar.GG,GT=zbar.GT,TT=zbar.TT)))
+    return(zt)
 }
 
 calcMalePaternity <- function(z, Nt, model.params) {
     ## Calculate male paternity probabilities for each genotype.
+
+    ## Calculates male paternity probabilities for each genotype based
+    ## on the expected number of offspring for males of each genotype
+    ## in the population.
 
     ## Args:
     ##   z: Population state vector
@@ -244,7 +237,10 @@ calcMalePaternity <- function(z, Nt, model.params) {
     ##   model.params: Vital rate model parameters
 
     ## Returns:
-    ##   Vector indicating the probability of paternity for males of each genotype.
+    ##   Vector indicating the probability of paternity for males of
+    ##   each genotype, or NA if the expected number of offspring for
+    ##   all genotypes is zero.
+
     Gset <- dimnames(z)$G
     Aset <- dimnames(z)$A
     num.off <- mk.flist(list(G=Gset))
@@ -264,9 +260,30 @@ calcMalePaternity <- function(z, Nt, model.params) {
     }
     ## obtain mating probs
     nTot <- sum(unlist(num.off))
-    pGm <- sapply(num.off, function(x) x/nTot)
+    if (nTot > 0) {
+        pGm <- sapply(num.off, function(x) x/nTot)
+    } else {
+        pGm <- NA
+    }
     return(pGm)
 }
+
+summariseSimRun <- function (simRun) {
+    simLen <- length(simRun)
+    ntT <- ntF <- ntM <- ntGG <- ntGT <- ntTT <- numeric(simLen)
+    ## compute quantities
+    for (tt in 1:simLen) {
+        nt1 <- simRun[[tt]]
+        ntT [tt] <- length(unlist(nt1[   ,,    ]))
+        ntF [tt] <- length(unlist(nt1["F",,    ]))
+        ntM [tt] <- length(unlist(nt1["M",,    ]))
+        ntGG[tt] <- length(unlist(nt1[   ,,"GG"]))
+        ntGT[tt] <- length(unlist(nt1[   ,,"GT"]))
+        ntTT[tt] <- length(unlist(nt1[   ,,"TT"]))
+    }
+    return( list(ntT=ntT, ntF=ntF, ntM=ntM, ntGG=ntGG, ntGT=ntGT, ntTT=ntTT) )
+}
+
 
 ## Adapted from IPM code
 r.grow.list <- mk.flist(list(S=c("F","M"), A=c(0,+1)))

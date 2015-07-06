@@ -11,5 +11,11 @@ source("./code_r/ibm_fun.r")
 
 set.seed(23020306)
 
-sim.len <- 50
-z <- doSim(mParFixEf, sim.length=sim.len)
+sim.len <- 250
+init.pop <- 700
+sim.out <- doSim(mParFixEf, sim.length=sim.len, init.pop.size=init.pop)
+
+simRunSum <- summariseSimRun(sim.out)
+
+pG <- (simRunSum$ntGG + 0.5*simRunSum$ntGT)/simRunSum$ntT
+plot(pG,type="l")
