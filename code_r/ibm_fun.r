@@ -9,16 +9,29 @@ sdNt <- 127.1302
 midNt <- 431.7917
 scaleN <- function(N) return((N-midNt)/sdNt)
 
-## Mean age and capture weight of mothers of age 0 individuals
+## Mean age and capture weight of mothers of age 0 individuals (from
+## Soay demographic data)
 mean.ageMum <- 4.06147
 mean.capWgtMum <- 3.082146
 
-initState <- function (m.par, init.pop.size = 500, maxA = 15) {
+initState <- function (m.par, init.pop.size = 500, init.G = NULL, maxA = 15) {
     ## Initialise individual state array for the population.
 
+    ## Follows strategy in supplementary material to Rees et al. 2014,
+    ## which is to initialise the population with a random selection
+    ## of new recruits from a normal distribution based on mean parent
+    ## size.
+
+    ## If an initial genotype is specified then the new individuals
+    ## are assigned to that genotype, with an equal number of
+    ## offspring of each sex. Otherwise, offspring are equally
+    ## distributed between sexes and genotypes.
+
     ## Args:
+    ##   m.par: Demographic model parameters.
     ##   init.pop.size: Initial size of the population.
-    ##   QUERY any other initialisation choices - age, sex, genotype?
+    ##   init.G: Initial genotype of population.
+    ##   maxA: Maximum age.
 
     ## Returns:
     ##   Individual state array containing the size of each individual
@@ -30,32 +43,28 @@ initState <- function (m.par, init.pop.size = 500, maxA = 15) {
     Gset <- c("GG","GT","TT")
     Sset <- c("F","M")
 
-    sets <- list(S=Sset, A=Aset, G=Gset)
-
     ## Initialise state array
     z <- mk.flist(list(S=Sset, A=Aset, G=Gset))
 
-    ## Following strategy in supplementary material to Rees et
-    ## al. 2014, which is to get a random selection of new recruits
-    ## from normal distribution based on mean parent size.  Offspring
-    ## size model developed for the Soay coat colour IPM takes into
-    ## account sex, twin status, maternal age, population density and
-    ## observation year.  With centred standardized density and year
-    ## this reduces to:
+    ## Assume equal numbers of offspring of each sex, distributed
+    ## equally amongst genotypes, unless an initial genotype is
+    ## specified.
+    n <- ifelse(is.null(init.G), init.pop.size/6, init.pop.size/2)
 
-    ## mu = mPar["sz.off.(Intercept)"]+mPar["sz.off.capWgtMum"]*x+
-    ## mPar["sz.off.ageMum"]*A+mPar["sz.off.sexM"]+mPar["sz.off.isTwnMat"]
-
-    ## Assume equal numbers of offspring of each sex and genotype.
-    n <- init.pop.size/6
-
-    ## Get proportion of twins in the new population based on twinning rate
+    ## Get proportion of twins in the new population based on twinning
+    ## rate for an average adult female
     p.twin <- invlogit(m.par["t.a1.F.(Intercept)"] + m.par["t.a1.F.capWgt"]*mean.capWgtMum
                        + m.par["t.a1.F.poly(ageY, 2, raw = TRUE)1"]*mean.ageMum
                        + m.par["t.a1.F.poly(ageY, 2, raw = TRUE)2"]*mean.ageMum^2)
+    ## Proportion of twins is number of twin lambs over total number of lambs
+    ## From twinning rate, 0.5*num.twin = p.twin(0.5*num.twin + num.sing))
+    ## Substitute num.sing = num.tot - num.twin and rearrange to get num.twin/num.tot:
     prop.twin <- 2*p.twin/(1+p.twin)
 
+    ## Get the sizes of the new individuals in each class, based on
+    ## mean maternal state
     for (G in Gset) {
+        if (!is.null(init.G) && init.G != G) next
         for (S in Sset) {
             mu <- m.par["sz.off.(Intercept)"] +
                 m.par["sz.off.capWgtMum"]*mean.capWgtMum +
@@ -74,17 +83,24 @@ initState <- function (m.par, init.pop.size = 500, maxA = 15) {
     return(z)
 }
 
-doSim <- function (model.params, init.pop.size = 500, sim.length = 200, maxA = 15) {
+doSim <- function (model.params, init.pop.size = 500, sim.length = 200, init.G = NULL, init.state = NULL, maxA = 15) {
+    ## Run simulation for the Soay coat colour genotype IBM.
 
-    ## check passed in params
-    ## - model params: should contain all expected parameters
-    ## - initial population size
-    ## - simulation length
-    ## - misc params such as maxA etc
-
-    ## this could be generalised to require that client passes in the
+    ## This could be generalised to require that client passes in the
     ## functions required to set up the state array for the system and
     ## to iterate the array between time steps.
+
+    ## Args:
+    ##   model.params: Demographic model parameters.
+    ##   init.pop.size: Initial size of the population.
+    ##   sim.length: Maximum number of time-steps in simulation.
+    ##   init.G: Initial genotype.
+    ##   init.state: Initial state array. If not specified then an
+    ##      initial population state array is generated.
+    ##   maxA: Maximum age of individuals.
+
+    ## Returns:
+    ##   Time series data consisting of population state array for each time step.
 
     ## Check the dimensions of model.params to determine whether
     ## to run simulation as averaged or variable environment.
@@ -97,7 +113,11 @@ doSim <- function (model.params, init.pop.size = 500, sim.length = 200, maxA = 1
     }
 
     ## Get initial population state
-    z <- initState (mPar, init.pop.size, maxA)
+    if (is.null(init.state)) {
+        z <- initState (mPar, init.pop.size, init.G, maxA)
+    } else {
+        z <- init.state
+    }
 
     ## Population structure - age, sex, genotype
     Aset <- dimnames(z)$A
