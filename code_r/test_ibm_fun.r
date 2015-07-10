@@ -26,9 +26,10 @@ getInvaderGrRt <- function(mPar, resG, resT=50, invT=50, init.pop=500, inv.prop=
     sim.res <- doSim(mPar, sim.length=resT, init.pop.size=init.pop, init.G = resG)
     res.z <- sim.res[[resT]]
 
-    ## Introduce invader - sample sizes from resident population, assign to random sex/age
+    ## Introduce invader - sample sizes from resident population,
+    ## assign to random sex/age.
     invN <- inv.prop*sum(unlist(res.z))
-    validA <- sapply(dimnames(res.z)$A, function(x) !is.null(z[["F", x, resG]]))
+    validA <- sapply(dimnames(res.z)$A, function(x) !is.null(res.z[["F", x, resG]]))
     invA <- sample(dimnames(res.z)$A[validA], invN, replace=TRUE)
     invS <- sample(dimnames(res.z)$S, invN, replace=TRUE)
     invZ <- sample(unlist(res.z), invN, replace=TRUE)
@@ -39,7 +40,15 @@ getInvaderGrRt <- function(mPar, resG, resT=50, invT=50, init.pop=500, inv.prop=
     simRunSum <- summariseSimRun(sim.inv)
     invNt <- with(simRunSum, switch(invG, GG=ntGG+ntGT/2, TT=ntTT+ntGT/2))
 
-    ## Return arithmetic mean of invader growth rate
-    ## N.B. this returns NaN if the invasion fails to establish at first step
+    ## Return arithmetic mean of stochastic log growth rate of invader.
     return(mean(diff(log(invNt[invNt>0]))))
+}
+
+simInv <- function(mod.params, inv.prop, num.reps, res="TT", resT=100, invT=500) {
+    invRate <- numeric(num.reps)
+    for (i in seq_len(num.reps)) {
+        invRate[i] <- getInvaderGrRt(mod.params, resG=resG,
+                                     resT=resT, invT=invT, inv.prop=inv.prop)
+    }
+    return(invRate)
 }
